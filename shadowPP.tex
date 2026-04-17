@@ -1,0 +1,228 @@
+\documentclass{beamer}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{tikz}
+\usepackage{amsmath}
+\usepackage{graphicx} 
+\usetikzlibrary{shapes.geometric, arrows, positioning, trees, calc}
+
+% Configuración de Estilos TikZ
+\tikzstyle{box} = [rectangle, rounded corners, minimum width=2cm, minimum height=0.8cm, text centered, draw=black, fill=blue!10]
+\tikzstyle{arrow} = [thick,->,>=stealth]
+\tikzstyle{decision} = [diamond, minimum width=2cm, minimum height=1cm, text centered, draw=black, fill=green!10]
+
+\title{Shadow Symbolic Execution: Verificación Dinámica de Parches}
+\subtitle{Testing for Divergences Between Software Versions}
+\author{Hristina Palikareva, Tomasz Kuchta, Cristian Cadar}
+\institute{Imperial College London}
+\date{ICSE 2016}
+
+\begin{document}
+
+\begin{frame}
+\titlepage
+\end{frame}
+
+%% 1. Motivación: El Problema del Patch Testing
+\begin{frame}{Motivación: El Problema del Patch Testing}
+\begin{itemize}
+    \item Los cambios en el software suelen introducir errores y vulnerabilidades.
+    \item La cobertura de lineas es insuficiente: se puede cubrir un parche sin ejecutar el \textbf{nuevo comportamiento} introducido.
+    \item \textbf{Limitación actual:} Los casos de prueba a menudo ejercitan el mismo comportamiento en ambas versiones.
+    \item \textbf{Solución:} Generar entradas que fuercen la divergencia entre la versión antigua y la nueva.
+\end{itemize}
+\end{frame}\
+
+
+\begin{frame}{Cobertura 100\% ...}
+\centering
+
+\begin{tikzpicture}[scale=1, every node/.style={font=\small}]
+
+  % Recta numérica más larga para dar espacio
+  \draw[<->, thick] (-0.5,0) -- (11.5,0);
+
+  % Ticks en posiciones más separadas: 0, 2.5, 5, 7.5, 10
+  \foreach \x/\lbl in {0/0, 2.5/10, 5/20, 7.5/30, 10/40} {
+    \draw (\x, 0.1) -- (\x, -0.1);
+    \node[below] at (\x, -0.15) {\lbl};
+  }
+
+  % Punto ciego entre 10 y 20 (x=2.5 a x=5)
+  \filldraw[fill=orange!70!black, draw=orange!80!black, rounded corners=3pt]
+    (2.5, 0.15) rectangle (5, 0.75);
+  \node[white, font=\scriptsize\bfseries] at (3.75, 0.45) {PUNTO CIEGO};
+
+  % Checkmarks
+  \node[green!50!black, font=\large] at (0, 0.65) {$\checkmark$};
+  \node[green!50!black, font=\scriptsize, above] at (0, 0.75) {\texttt{x = 0}};
+
+  \node[green!50!black, font=\large] at (7.5, 0.65) {$\checkmark$};
+  \node[green!50!black, font=\scriptsize, above] at (7.5, 0.75) {\texttt{x = 30}};
+
+  % Flechas punteadas
+  \draw[->, dashed, gray] (2.5, -1.8) -- (2.5, -0.6)
+  ;
+  \draw[->,  dashed, gray] (5,   -1.8) -- (5,   -0.6);
+
+  % Caja versión antigua — centrada en x=2.5
+  \node[draw=teal!60!black, fill=teal!10, rounded corners=4pt,
+        minimum width=3cm, minimum height=0.7cm,
+        font=\ttfamily\small] at (2.5, -2.3) {if (x > 10)};
+  \node[font=\tiny, text=teal!60!black] at (2.5, -2.9) {versión antigua};
+
+  % Caja versión nueva — centrada en x=5
+  \node[draw=orange!70!black, fill=orange!10, rounded corners=4pt,
+        minimum width=3cm, minimum height=0.7cm,
+        font=\ttfamily\small] at (6, -2.3) {if (x > 20)};
+  \node[font=\tiny, text=orange!70!black] at (5, -2.9) {versión nueva};
+
+\end{tikzpicture}
+
+\vspace{0.5em}
+{\color{black}
+  Tests con \texttt{x=0} y \texttt{x=30} logran cobertura total en ambas versiones, pero los valores que generan divergencias (11--20) jamás se evalúan.
+}
+
+\end{frame}
+
+%% 3. Shadow Intro
+\begin{frame}{Shadow}
+\begin{itemize}
+  \item \textbf{¿Qué hace?}
+  \begin{itemize}
+    \item Ejecuta ambas versiones en la misma instancia de Ejecución Simbólica.
+    \item Determina precisamente cuando hay divergencia en el comportamiento
+    \item Tiempo de ejecución y consumo de memoria bajos
+  \end{itemize}
+  \item \textbf{¿Cómo lo hace?}
+  \begin{enumerate}
+    \item Unifica ambas versiones usando anotaciones \texttt{change()}.
+    \item Selecciona casos de prueba que ejecuten el parche.
+    \item Symboluc Execution con bifurcación de cuatro vías para detectar divergencias.
+    \item Re-ejecución nativa para validar divergencias y clasificar resultados.
+  \end{enumerate}
+\end{itemize}
+  \end{frame}
+
+
+%% 4. Flow de Trabajo de Shadow
+\begin{frame}{Flujo de Trabajo de SHADOW}
+\centering
+\begin{tikzpicture}[node distance=1cm, scale=0.6, every node/.style={scale=0.6}]
+    \node (old) [box] {Versión Antigua};
+    \node (new) [box, right=of old] {Versión Nueva};
+    \node (unify) [box, below=0.8cm of $(old)!0.5!(new)$] {Unificar (change() annotations)};
+    \node (select) [box, below=of unify] {Selección: Test que tocan el parche};
+    \node (symexec) [box, fill=orange!20, below=of select] {Shadow Symbolic Execution};
+    \node (replay) [box, below=of symexec] {Cross-version Checks (Native Replay)};
+    \node (res) [box, fill=red!20, below=of replay] {Clasificación: Bugs vs Divergencias Esperadas};
+
+    \draw [arrow] (old) -- (unify); \draw [arrow] (new) -- (unify);
+    \draw [arrow] (unify) -- (select); \draw [arrow] (select) -- (symexec);
+    \draw [arrow] (symexec) -- (replay); \draw [arrow] (replay) -- (res);
+\end{tikzpicture}
+\end{frame}
+
+
+% 5. Paso 1: Unificación de Versiones
+\begin{frame}{Unificación de Versiones: El Macro \texttt{change()}}
+\begin{itemize}
+    \item Las versiones se ejecutan en \textbf{lockstep} (sincronía) hasta divergir.
+    \item \textbf{Patrones de Anotación:}
+    \begin{itemize}
+        \item \textbf{Rvalues:} \texttt{x = change(E1, E2)}
+        \item \textbf{Condicionales:} \texttt{if (A \&\& change(true, B))} para fortalecer condiciones.
+        \item \textbf{Código Lineal:} \texttt{if (change(true, false)) \{ old\_code \}} para eliminar fragmentos.
+    \end{itemize}
+\end{itemize}
+
+\begin{figure}
+  \centering
+  \includegraphics[width=0.8\textwidth]{images/change_example.png}
+  \caption{Ejemplo de uso de \texttt{change()} para unificar código}
+\end{figure}
+\end{frame}
+
+\begin{frame}{Bifurcación de Cuatro Vías (Four-way Forking)}
+\centering
+\begin{tikzpicture}[level distance=1.2cm,
+  level 1/.style={sibling distance=2.5cm},
+  level 2/.style={sibling distance=1.2cm},
+  scale=0.7, every node/.style={scale=0.7}]
+  
+  \node [circle, draw] {Branch}
+    child {node [rectangle, draw] {$new \land old$}
+      child {node {Same Path}}
+    }
+    child {node [rectangle, draw, fill=gray!30] {$new \land \neg old$}
+      child {node {Diff (Divergencia)}}
+    }
+    child {node [rectangle, draw, fill=gray!30] {$\neg new \land old$}
+      child {node {Diff (Divergencia)}}
+    }
+    child {node [rectangle, draw] {$\neg new \land \neg old$}
+      child {node {Same Path}}
+    };
+\end{tikzpicture}
+\begin{itemize}
+    \item Evalúa la condición de bifurcación bajo los estados de ambas versiones.
+    \item Los caminos \textbf{Diff} (sombreados) son los que exponen comportamientos únicos del parche.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Eficiencia: Shadow Expressions}
+\centering
+\begin{tikzpicture}[sibling distance=1.5cm, level distance=1cm, 
+    every node/.style={circle, draw, minimum size=0.6cm}, scale=0.8]
+    \node {z}
+        child {node {y}
+            child {node [rectangle, fill=yellow!20, minimum width=1.5cm] {SHADOW}
+                child {node {a}}
+                child {node {b}}
+            }
+            child {node {1}}
+        }
+        child {node {2}};
+\end{tikzpicture}
+\begin{itemize}
+    \item Las expresiones que contienen cambios se mantienen como nodos \textbf{SHADOW}.
+    \item \textbf{Ventajas:} Propagación implícita de cambios, creación en tiempo constante y máxima compartición de memoria.
+    \item Si $e_{old} \equiv e_{new}$ bajo el PC actual, se simplifica la expresión.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Fases de Exploración Dinámica}
+\textbf{1. Fase Concolic:}
+\begin{itemize}
+    \item Ejecuta la entrada inicial. Si detecta que una divergencia es \textbf{posible} (aunque no se siga), genera un caso de prueba y lo encola.
+\end{itemize}
+\textbf{2. Bounded Symbolic Execution (BSE):}
+\begin{itemize}
+    \item Retoma los puntos de divergencia de la cola.
+    \item Ejecuta una búsqueda en anchura (BFS) \textbf{solo en la versión nueva} para explorar el impacto del parche sistemáticamente.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Oráculos y Cross-version Checks}
+\begin{itemize}
+    \item \textbf{Comparación de Salida:} Se contrastan \texttt{stdout} y \texttt{exit codes} en ejecución nativa.
+    \item \textbf{Detección de Errores de Memoria:} Se utiliza \textbf{AddressSanitizer} para identificar desbordamientos de búfer o \textit{use-after-free} que no causan crash inmediato.
+    \item \textbf{Clasificación automática:}
+    \begin{itemize}
+        \item Bug de regresión si la nueva falla y la antigua no.
+        \item Divergencia esperada si el cambio es intencional según el commit.
+    \end{itemize}
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Resultados en Coreutils}
+\begin{itemize}
+    \item Evaluado en 18 parches complejos de COREBench.
+    \item \textbf{Caso de éxito (cut):} Encontró un desbordamiento de búfer en parches que gestionan rangos abiertos/cerrados.
+    \item Expuso errores de tipo \textit{abort} y regresiones semánticas que pasaron desapercibidas en las suites de prueba originales.
+    \item \textbf{Conclusión:} SSE reduce drásticamente el espacio de búsqueda al enfocarse solo en las divergencias.
+\end{itemize}
+\end{frame}
+
+\end{document}
