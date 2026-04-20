@@ -4,7 +4,9 @@
 \usepackage{tikz}
 \usepackage{amsmath}
 \usepackage{graphicx} 
-\usetikzlibrary{shapes.geometric, arrows, positioning, trees, calc}
+\usetheme{Madrid}       % bordes, header y footer
+\usecolortheme{default} % colores
+\usetikzlibrary{shapes.geometric, arrows, positioning, trees, calc, backgrounds, fit}
 
 % Configuración de Estilos TikZ
 \tikzstyle{box} = [rectangle, rounded corners, minimum width=2cm, minimum height=0.8cm, text centered, draw=black, fill=blue!10]
@@ -31,7 +33,7 @@
     \item \textbf{Limitación actual:} Los casos de prueba a menudo ejercitan el mismo comportamiento en ambas versiones.
     \item \textbf{Solución:} Generar entradas que fuercen la divergencia entre la versión antigua y la nueva.
 \end{itemize}
-\end{frame}\
+\end{frame}
 
 
 \begin{frame}{Cobertura 100\% ...}
@@ -99,7 +101,7 @@
   \begin{enumerate}
     \item Unifica ambas versiones usando anotaciones \texttt{change()}.
     \item Selecciona casos de prueba que ejecuten el parche.
-    \item Symboluc Execution con bifurcación de cuatro vías para detectar divergencias.
+    \item Symbolic Execution con bifurcación de cuatro vías para detectar divergencias.
     \item Re-ejecución nativa para validar divergencias y clasificar resultados.
   \end{enumerate}
 \end{itemize}
@@ -114,19 +116,32 @@
     \node (new) [box, right=of old] {Versión Nueva};
     \node (unify) [box, below=0.8cm of $(old)!0.5!(new)$] {Unificar (change() annotations)};
     \node (select) [box, below=of unify] {Selección: Test que tocan el parche};
-    \node (symexec) [box, fill=orange!20, below=of select] {Shadow Symbolic Execution};
-    \node (replay) [box, below=of symexec] {Cross-version Checks (Native Replay)};
-    \node (res) [box, fill=red!20, below=of replay] {Clasificación: Bugs vs Divergencias Esperadas};
+    % Dos fases internas
+    \node (concolic) [box, fill=orange!40, below=0.9cm of select, xshift=-1.34cm, minimum width=2.2cm, minimum height=0.8cm] {1. Concolic Phase};
+    \node (bse)      [box, fill=orange!20, right=0.3cm of concolic, minimum width=2.2cm, minimum height=0.8cm] {2. BSE};
+    % Contenedor con borde negro
+    \begin{pgfonlayer}{background}
+        \node [draw=black, fill=orange!10, rounded corners=6pt, thin,
+               fit=(concolic)(bse), inner xsep=1.3cm, inner ysep=0.8cm] (symexec) {};
+    \end{pgfonlayer}
+    % Etiqueta anclada al borde superior del contenedor
+    \node [font=\small\bfseries, anchor=north] at (symexec.north) {Shadow Symbolic Execution};
+
+    \node (replay) [box, below=0.8cm of symexec] {Cross-version Checks (Native Replay)};
+    \node (bugs) [box, fill=red!20, below left=0.8cm and 1.2cm of replay] {Bugs de Regresión};
+    \node (diverg) [box, fill=yellow!20, below right=0.8cm and 1.2cm of replay] {Divergencias Esperadas};
 
     \draw [arrow] (old) -- (unify); \draw [arrow] (new) -- (unify);
     \draw [arrow] (unify) -- (select); \draw [arrow] (select) -- (symexec);
-    \draw [arrow] (symexec) -- (replay); \draw [arrow] (replay) -- (res);
+    \draw [arrow] (symexec) -- (replay);
+    \draw [arrow] (replay) -- (bugs);
+    \draw [arrow] (replay) -- (diverg);
 \end{tikzpicture}
 \end{frame}
 
 
 % 5. Paso 1: Unificación de Versiones
-\begin{frame}{Unificación de Versiones: El Macro \texttt{change()}}
+\begin{frame}{1. Unificación de Versiones: El Macro \texttt{change()}}
 \begin{itemize}
     \item Las versiones se ejecutan en \textbf{lockstep} (sincronía) hasta divergir.
     \item \textbf{Patrones de Anotación:}
@@ -139,12 +154,28 @@
 
 \begin{figure}
   \centering
-  \includegraphics[width=0.8\textwidth]{images/change_example.png}
+  \includegraphics[width=0.6\textwidth]{images/change.png}
   \caption{Ejemplo de uso de \texttt{change()} para unificar código}
 \end{figure}
 \end{frame}
 
-\begin{frame}{Bifurcación de Cuatro Vías (Four-way Forking)}
+
+\begin{frame}{2. Fase de Ejecución Simbólica Shadow}
+  \begin{itemize}
+    \item \textbf{1. Concolic Phase:} Ejecuta la entrada inicial, y recopila puntos de divergencia.
+    \begin{itemize}
+      \item Computacionalmente muy barato.
+      \item Explora solo el camino concreto, pero detecta divergencias potenciales.
+    \end{itemize}
+    \item \textbf{2. Bounded Symbolic Execution (BSE):} Para cada punto de divergencia, se ejecuta una BFS solo en la versión nueva. 
+    \begin{itemize}
+      \item Permite explorar el comportamiento divergente y su impacto sistemáticamente.
+    \end{itemize}
+\end{itemize}
+\end{frame}
+
+
+\begin{frame}{2.1 Concolic Phase: Four-way Forking}
 \centering
 \begin{tikzpicture}[level distance=1.2cm,
   level 1/.style={sibling distance=2.5cm},
@@ -156,28 +187,32 @@
       child {node {Same Path}}
     }
     child {node [rectangle, draw, fill=gray!30] {$new \land \neg old$}
-      child {node {Diff (Divergencia)}}
+      child {node {Diff}}
     }
     child {node [rectangle, draw, fill=gray!30] {$\neg new \land old$}
-      child {node {Diff (Divergencia)}}
+      child {node {Diff}}
     }
     child {node [rectangle, draw] {$\neg new \land \neg old$}
       child {node {Same Path}}
     };
 \end{tikzpicture}
-\begin{itemize}
-    \item Evalúa la condición de bifurcación bajo los estados de ambas versiones.
-    \item Los caminos \textbf{Diff} (sombreados) son los que exponen comportamientos únicos del parche.
-\end{itemize}
+\vspace{5pt}
+
+\raggedright
+A medida que el programa ejecuta, cada vez que se encuentra una bifurcación (branch), se definen 2 casos:
+    \begin{itemize}
+        \item \textbf{Diff:} Las versiones divergen en este punto. Se detiene la ejecución sombra, y se encola el punto para exploración posterior en la fase 2.
+        \item \textbf{Same Path:} Ambas versiones siguen el mismo camino, pero una divergencia es posible. Se genera un caso de prueba que ejecute esa diferencia, se encola para la fase 2. Se continúa la ejecución concolic.
+    \end{itemize}
 \end{frame}
 
-\begin{frame}{Eficiencia: Shadow Expressions}
+\begin{frame}{2.2 Bounded Symbolic Execution (BSE)}
 \centering
 \begin{tikzpicture}[sibling distance=1.5cm, level distance=1cm, 
     every node/.style={circle, draw, minimum size=0.6cm}, scale=0.8]
     \node {z}
         child {node {y}
-            child {node [rectangle, fill=yellow!20, minimum width=1.5cm] {SHADOW}
+            child {node [rectangle, fill=yellow!20, minimum width=1.5cm] {DIFF}
                 child {node {a}}
                 child {node {b}}
             }
@@ -186,43 +221,52 @@
         child {node {2}};
 \end{tikzpicture}
 \begin{itemize}
-    \item Las expresiones que contienen cambios se mantienen como nodos \textbf{SHADOW}.
-    \item \textbf{Ventajas:} Propagación implícita de cambios, creación en tiempo constante y máxima compartición de memoria.
-    \item Si $e_{old} \equiv e_{new}$ bajo el PC actual, se simplifica la expresión.
+    \item Sobre cada punto de divergencia encontrado, se ejecuta una Bounded Symbolic Execution \textbf{solo en la versión nueva}.
+    \item \textbf{Ventajas:} Permite generar otros inputs divergentes que muestren el mismo comportamiento de branching hasta ese punto, pero fistinto luego. 
 \end{itemize}
 \end{frame}
 
-\begin{frame}{Fases de Exploración Dinámica}
-\textbf{1. Fase Concolic:}
-\begin{itemize}
-    \item Ejecuta la entrada inicial. Si detecta que una divergencia es \textbf{posible} (aunque no se siga), genera un caso de prueba y lo encola.
-\end{itemize}
-\textbf{2. Bounded Symbolic Execution (BSE):}
-\begin{itemize}
-    \item Retoma los puntos de divergencia de la cola.
-    \item Ejecuta una búsqueda en anchura (BFS) \textbf{solo en la versión nueva} para explorar el impacto del parche sistemáticamente.
-\end{itemize}
+\begin{frame}{Expresiones Shadow}
+
+Los parches normalmente afectan un subconjunto pequeño de expresiones simbólicas, por lo que se introducen \textbf{expresiones shadow} para representar el estado de ambas versiones sin duplicar toda la información.
+\begin{figure}
+  \centering
+  \includegraphics[width=0.6\textwidth]{images/shadow_exp.png}
+  \caption{Árbol de expresiones compartido para las variables x, y y z. 
+  Las expresiones que contienen subexpresiones shadow se mantienen en el almacenamiento
+  simbólico y se evalúan de forma lazy en los puntos de bifurcación.}
+\end{figure}
 \end{frame}
 
-\begin{frame}{Oráculos y Cross-version Checks}
+\begin{frame}{3. Cross-version Checks}
+Se busca determinar si uni input divergente realmente expone un bug o es una divergencia esperada.  
 \begin{itemize}
-    \item \textbf{Comparación de Salida:} Se contrastan \texttt{stdout} y \texttt{exit codes} en ejecución nativa.
-    \item \textbf{Detección de Errores de Memoria:} Se utiliza \textbf{AddressSanitizer} para identificar desbordamientos de búfer o \textit{use-after-free} que no causan crash inmediato.
-    \item \textbf{Clasificación automática:}
+    \item \textbf{Cross-version Checks:} Se corren ambas versiones de forma natica con el input divergente generado, y se comparan los outputs y exit codes.
+    \item \textbf{Detección de Errores Genéricos:} Se utiliza \textbf{AddressSanitizer} para identificar\textit{buffer overflows}o \textit{crashes}. 
+    \item \textbf{Clasificación:}
     \begin{itemize}
         \item Bug de regresión si la nueva falla y la antigua no.
-        \item Divergencia esperada si el cambio es intencional según el commit.
+        \item Divergencia esperada si el cambio es intencional según el commit (requiere de análisis humano a veces).
     \end{itemize}
 \end{itemize}
 \end{frame}
 
-\begin{frame}{Resultados en Coreutils}
-\begin{itemize}
-    \item Evaluado en 18 parches complejos de COREBench.
-    \item \textbf{Caso de éxito (cut):} Encontró un desbordamiento de búfer en parches que gestionan rangos abiertos/cerrados.
-    \item Expuso errores de tipo \textit{abort} y regresiones semánticas que pasaron desapercibidas en las suites de prueba originales.
-    \item \textbf{Conclusión:} SSE reduce drásticamente el espacio de búsqueda al enfocarse solo en las divergencias.
-\end{itemize}
+\begin{frame}{Resultados: Victorias de SHADOW}
+\begin{enumerate}
+    \item \textbf{Bugs reales encontrados:} buffer overflow en \texttt{cut} (patch \#6) y un bug adicional en patch \#21 no cubierto por el test suite original.
+    \item \textbf{Four-way forking eficiente:} consumo de memoria nunca superó los 2\,GB por invocación gracias a las \textit{shadow expressions}.
+    \item \textbf{Inputs para documentación:} generó divergencias esperadas útiles para agregar al test suite de regresión.
+    \item \textbf{Escala a patches grandes:} anotó patches de hasta cientos de LOC; el esfuerzo crece con hunks, no con tamaño.
+\end{enumerate}
+\end{frame}
+
+\begin{frame}{Resultados: Limitaciones de SHADOW}
+\begin{enumerate}
+    \item \textbf{Anotaciones manuales:} el pipeline depende de unificar versiones a mano con \texttt{change()}, lo que es error-prone y no escala.
+    \item \textbf{Hereda limitaciones de KLEE:} sin soporte para punto flotante, directorios simbólicos ni permisos de archivos, bugs \#1, \#8 y \#14 no detectados.
+    \item \textbf{Demasiadas divergencias:} patch \#21 genera $>$21.000 divergencias sin ranking ni clustering para priorizarlas.
+    \item \textbf{Solo flujo de control:} cambios en propiedades no funcionales (memoria, performance) son invisibles para la técnica.
+\end{enumerate}
 \end{frame}
 
 \end{document}
