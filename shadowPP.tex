@@ -266,6 +266,9 @@ Se busca determinar si uni input divergente realmente expone un bug o es una div
     \item \textbf{Hereda limitaciones de KLEE:} sin soporte para punto flotante, directorios simbólicos ni permisos de archivos, bugs \#1, \#8 y \#14 no detectados.
     \item \textbf{Demasiadas divergencias:} patch \#21 genera $>$21.000 divergencias sin ranking ni clustering para priorizarlas.
     \item \textbf{Solo flujo de control:} cambios en propiedades no funcionales (memoria, performance) son invisibles para la técnica.
+    \begin{itemize}
+        \item Ejemplo: \texttt{int f(int a, int b) \{...; return a - b;\}}, patch: \texttt{return a - b} $\to$ \texttt{return a + b}. No hay divergencia de control, pero el comportamiento es completamente diferente.
+    \end{itemize}
 \end{enumerate}
 \end{frame}
 
